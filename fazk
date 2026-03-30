@@ -1,0 +1,1580 @@
+/Assets
+  /Scripts
+    /Player
+      - PlayerController.cs
+      - StaminaSystem.cs
+      - FlashlightSystem.cs
+      - InteractionSystem.cs
+    /Enemy
+      - HaairaAI.cs
+      - HaairaTransform.cs
+      - PathfindingManager.cs
+    /Game
+      - GameManager.cs
+      - AudioManager.cs
+      - EventsManager.cs
+      - SaveManager.cs
+    /Environment
+      - BurnDollSystem.cs
+      - FireplaceController.cs
+      - DoorController.cs
+      - LightingManager.cs
+    /UI
+      - MenuManager.cs
+      - HUDManager.cs
+      - DeathScreen.cs
+  /Scenes
+    - MainMenu.unity
+    - CinematicIntro.unity
+    - CastleMain.unity
+    - BasementLevel.unity
+    - EndingSequence.unity
+  /Audio
+    /Ambience
+      - wind_loop.ogg
+      - distant_laugh_01.ogg
+      - distant_laugh_02.ogg
+      - castle_ambience.ogg
+    /SFX
+      - footsteps_wood.ogg
+      - door_creak.ogg
+      - doll_scream.ogg
+      - fire_burning.ogg
+      - haaira_scream_pain.ogg
+    /Music
+      - tension_layer_1.ogg
+      - tension_layer_2.ogg
+      - tension_layer_3.ogg
+  /Prefabs
+    - Doll.prefab
+    - Haaira.prefab
+    - Fireplace.prefab
+    - Door.prefab
+    - Note.prefab
+    - Wood.prefab
+  /Art
+    /Characters
+      - Haaira_Normal.fbx
+      - Haaira_Transformed.fbx
+      - Doll_BlueHair.fbx
+    /Environments
+      - Castle_Main_Hall.fbx
+      - Castle_Basement.fbx
+      - Castle_Bedroom.fbx
+      - Forest.fbx
+    /Textures
+      - haaira_skin.png
+      - doll_fabric.png
+      - castle_stone.png
+      - wood_texture.png
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+public class PlayerController : MonoBehaviour
+{
+    [Header("Movement")]
+    [SerializeField] private float walkSpeed = 5f;
+    [SerializeField] private float sprintSpeed = 8f;
+    [SerializeField] private float crouchSpeed = 2.5f;
+    [SerializeField] private float groundDrag = 5f;
+    [SerializeField] private float jumpForce = 5f;
+    [SerializeField] private float airDrag = 2f;
+
+    [Header("Stamina")]
+    [SerializeField] private float maxStamina = 100f;
+    [SerializeField] private float staminaDrainRate = 20f;
+    [SerializeField] private float staminaRegenRate = 15f;
+
+    [Header("Ground Check")]
+    [SerializeField] private float groundDrag_var = 0.25f;
+    [SerializeField] private float playerHeight = 2f;
+    [SerializeField] private LayerMask groundLayer;
+
+    [Header("Footstep Audio")]
+    [SerializeField] private AudioClip[] footstepClips;
+    [SerializeField] private float footstepInterval = 0.4f;
+
+    private Rigidbody rb;
+    private Transform cam;
+    private float currentStamina;
+    private float verticalInput;
+    private float horizontalInput;
+    private bool isGrounded;
+    private bool isSprinting;
+    private bool isCrouching;
+    private float footstepTimer;
+    private Vector3 moveDirection;
+    private float lastStaminaValue;
+
+    public float CurrentStamina => currentStamina;
+    public float MaxStamina => maxStamina;
+
+    private void Start()
+    {
+        rb = GetComponent<Rigidbody>();
+        cam = GetComponentInChildren<Camera>().transform;
+        currentStamina = maxStamina;
+        rb.drag = groundDrag;
+    }
+
+    private void Update()
+    {
+        HandleInput();
+        HandleStamina();
+        HandleFootsteps();
+        UpdateDrag();
+        SpeedControl();
+    }
+
+    private void FixedUpdate()
+    {
+        Movement();
+    }
+
+    private void HandleInput()
+    {
+        verticalInput = Input.GetAxis("Vertical");
+        horizontalInput = Input.GetAxis("Horizontal");
+        isSprinting = Input.GetKey(KeyCode.LeftShift) && currentStamina > 0 && isGrounded;
+        isCrouching = Input.GetKey(KeyCode.LeftControl);
+
+        // Check if grounded
+        isGrounded = Physics.Raycast(transform.position, Vector3.down, playerHeight * 0.5f + 0.2f, groundLayer);
+    }
+
+    private void Movement()
+    {
+        moveDirection = transform.forward * verticalInput + transform.right * horizontalInput;
+
+        float currentSpeed = isCrouching ? crouchSpeed : (isSprinting ? sprintSpeed : walkSpeed);
+        rb.velocity = new Vector3(moveDirection.x * currentSpeed, rb.velocity.y, moveDirection.z * currentSpeed);
+    }
+
+    private void HandleStamina()
+    {
+        if (isSprinting && verticalInput != 0)
+        {
+            currentStamina -= staminaDrainRate * Time.deltaTime;
+            currentStamina = Mathf.Max(0, currentStamina);
+        }
+        else if (currentStamina < maxStamina)
+        {
+            currentStamina += staminaRegenRate * Time.deltaTime;
+            currentStamina = Mathf.Min(maxStamina, currentStamina);
+        }
+
+        lastStaminaValue = currentStamina;
+    }
+
+    private void HandleFootsteps()
+    {
+        if (isGrounded && (verticalInput != 0 || horizontalInput != 0))
+        {
+            footstepTimer -= Time.deltaTime;
+            if (footstepTimer <= 0)
+            {
+                float interval = isSprinting ? footstepInterval * 0.6f : footstepInterval;
+                AudioSource.PlayClipAtPoint(footstepClips[Random.Range(0, footstepClips.Length)], 
+                    transform.position, 0.5f);
+                footstepTimer = interval;
+            }
+        }
+        else
+        {
+            footstepTimer = 0;
+        }
+    }
+
+    private void UpdateDrag()
+    {
+        if (isGrounded)
+        {
+            rb.drag = groundDrag;
+        }
+        else
+        {
+            rb.drag = airDrag;
+        }
+    }
+
+    private void SpeedControl()
+    {
+        Vector3 flatVel = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+
+        if (flatVel.magnitude > (isSprinting ? sprintSpeed : walkSpeed))
+        {
+            Vector3 limitedVel = flatVel.normalized * (isSprinting ? sprintSpeed : walkSpeed);
+            rb.velocity = new Vector3(limitedVel.x, rb.velocity.y, limitedVel.z);
+        }
+    }
+
+    public void Interact(InteractionSystem interaction)
+    {
+        interaction.PerformInteraction();
+    }
+}
+using UnityEngine;
+
+public class FlashlightSystem : MonoBehaviour
+{
+    [SerializeField] private Light flashlightLight;
+    [SerializeField] private float maxBattery = 100f;
+    [SerializeField] private float batteryDrainRate = 10f;
+    [SerializeField] private float batteryRechargeRate = 5f;
+    [SerializeField] private AudioClip toggleSound;
+    [SerializeField] private float batteryWarningThreshold = 20f;
+
+    private float currentBattery;
+    private bool isFlashlightOn;
+    private AudioSource audioSource;
+
+    public float CurrentBattery => currentBattery;
+    public float MaxBattery => maxBattery;
+    public bool IsOn => isFlashlightOn;
+
+    private void Start()
+    {
+        audioSource = GetComponent<AudioSource>();
+        currentBattery = maxBattery;
+        flashlightLight.enabled = false;
+    }
+
+    private void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.F))
+        {
+            ToggleFlashlight();
+        }
+
+        if (isFlashlightOn)
+        {
+            currentBattery -= batteryDrainRate * Time.deltaTime;
+            if (currentBattery <= 0)
+            {
+                currentBattery = 0;
+                TurnOffFlashlight();
+            }
+        }
+    }
+
+    private void ToggleFlashlight()
+    {
+        if (currentBattery > 0)
+        {
+            isFlashlightOn = !isFlashlightOn;
+            flashlightLight.enabled = isFlashlightOn;
+            audioSource.PlayOneShot(toggleSound);
+        }
+    }
+
+    private void TurnOffFlashlight()
+    {
+        isFlashlightOn = false;
+        flashlightLight.enabled = false;
+    }
+
+    public void RechargeBattery()
+    {
+        currentBattery += batteryRechargeRate;
+        currentBattery = Mathf.Min(currentBattery, maxBattery);
+    }
+
+    public bool IsBatteryLow => currentBattery < batteryWarningThreshold;
+}
+using UnityEngine;
+using UnityEngine.AI;
+
+public class HaairaAI : MonoBehaviour
+{
+    public enum AIState { Passive, Hunting, Transformed, Defeated }
+
+    [Header("AI Behavior")]
+    [SerializeField] private float visionRange = 30f;
+    [SerializeField] private float hearingRange = 20f;
+    [SerializeField] private float chaseSpeed = 6f;
+    [SerializeField] private float patrolSpeed = 2f;
+    [SerializeField] private float attackDistance = 2f;
+
+    [Header("Patrol Points")]
+    [SerializeField] private Transform[] patrolPoints;
+
+    [Header("Transformation")]
+    [SerializeField] private int transformationThreshold = 6; // After 6 dolls burned
+
+    [Header("Audio")]
+    [SerializeField] private AudioClip laughSound;
+    [SerializeField] private AudioClip painScreamSound;
+    [SerializeField] private AudioClip monsterGrowlSound;
+
+    private NavMeshAgent navMeshAgent;
+    private Transform playerTransform;
+    private AudioSource audioSource;
+    private AIState currentState = AIState.Passive;
+    private int patrolIndex = 0;
+    private bool isTransformed = false;
+    private Animator animator;
+    private float laughTimer;
+
+    public AIState CurrentState => currentState;
+    public bool IsTransformed => isTransformed;
+
+    private void Start()
+    {
+        navMeshAgent = GetComponent<NavMeshAgent>();
+        audioSource = GetComponent<AudioSource>();
+        animator = GetComponent<Animator>();
+        playerTransform = GameObject.FindGameObjectWithTag("Player").transform;
+        navMeshAgent.speed = patrolSpeed;
+    }
+
+    private void Update()
+    {
+        switch (currentState)
+        {
+            case AIState.Passive:
+                PatrolBehavior();
+                CheckForPlayer();
+                break;
+            case AIState.Hunting:
+                HuntPlayer();
+                break;
+            case AIState.Transformed:
+                HuntPlayerTransformed();
+                break;
+            case AIState.Defeated:
+                navMeshAgent.velocity = Vector3.zero;
+                break;
+        }
+
+        HandleLaughing();
+    }
+
+    private void PatrolBehavior()
+    {
+        if (patrolPoints.Length == 0) return;
+
+        if (!navMeshAgent.hasPath || navMeshAgent.remainingDistance < 0.5f)
+        {
+            patrolIndex = (patrolIndex + 1) % patrolPoints.Length;
+            navMeshAgent.SetDestination(patrolPoints[patrolIndex].position);
+        }
+    }
+
+    private void CheckForPlayer()
+    {
+        float distanceToPlayer = Vector3.Distance(transform.position, playerTransform.position);
+
+        if (distanceToPlayer < visionRange)
+        {
+            // Check line of sight
+            if (CanSeePlayer())
+            {
+                currentState = AIState.Hunting;
+            }
+        }
+        else if (distanceToPlayer < hearingRange)
+        {
+            // Heard player
+            currentState = AIState.Hunting;
+        }
+    }
+
+    private bool CanSeePlayer()
+    {
+        Vector3 directionToPlayer = (playerTransform.position - transform.position).normalized;
+        RaycastHit hit;
+
+        if (Physics.Raycast(transform.position + Vector3.up, directionToPlayer, out hit, visionRange))
+        {
+            return hit.transform == playerTransform;
+        }
+        return false;
+    }
+
+    private void HuntPlayer()
+    {
+        navMeshAgent.speed = chaseSpeed;
+        navMeshAgent.SetDestination(playerTransform.position);
+        animator.SetBool("isHunting", true);
+
+        if (Vector3.Distance(transform.position, playerTransform.position) < attackDistance)
+        {
+            CatchPlayer();
+        }
+    }
+
+    private void HuntPlayerTransformed()
+    {
+        navMeshAgent.speed = chaseSpeed * 1.3f; // Faster when transformed
+        navMeshAgent.SetDestination(playerTransform.position);
+        animator.SetBool("isHunting", true);
+
+        if (Vector3.Distance(transform.position, playerTransform.position) < attackDistance * 1.5f)
+        {
+            CatchPlayer();
+        }
+    }
+
+    private void CatchPlayer()
+    {
+        // Trigger death/restart
+        GameManager.instance.PlayerCaught();
+    }
+
+    private void HandleLaughing()
+    {
+        laughTimer -= Time.deltaTime;
+        if (laughTimer <= 0 && currentState == AIState.Passive)
+        {
+            laughTimer = Random.Range(15f, 30f);
+            PlayDistantLaugh();
+        }
+    }
+
+    private void PlayDistantLaugh()
+    {
+        audioSource.PlayOneShot(laughSound, 0.4f);
+    }
+
+    public void OnDollBurned()
+    {
+        audioSource.PlayOneShot(painScreamSound, 0.8f);
+    }
+
+    public void Transform()
+    {
+        isTransformed = true;
+        currentState = AIState.Transformed;
+        audioSource.PlayOneShot(monsterGrowlSound, 1f);
+        animator.SetBool("isTransformed", true);
+        // Update visuals here
+    }
+
+    public void SetDefeated()
+    {
+        currentState = AIState.Defeated;
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class BurnDollSystem : MonoBehaviour
+{
+    [Header("Burning Mechanics")]
+    [SerializeField] private ParticleSystem fireParticles;
+    [SerializeField] private AudioClip fireBurningSound;
+    [SerializeField] private AudioClip dollScreamSound;
+    [SerializeField] private float burnDuration = 3f;
+    [SerializeField] private Light fireLight;
+
+    [Header("Progression")]
+    [SerializeField] private int totalDollsToBurn = 7;
+
+    private int dollsBurned = 0;
+    private bool isBurning = false;
+    private HaairaAI haairaAI;
+    private AudioSource audioSource;
+
+    public int DollsBurned => dollsBurned;
+    public int TotalDolls => totalDollsToBurn;
+
+    private void Start()
+    {
+        audioSource = GetComponent<AudioSource>();
+        haairaAI = GameObject.Find("Haaira").GetComponent<HaairaAI>();
+    }
+
+    public void BurnDoll(GameObject doll)
+    {
+        if (!isBurning && dollsBurned < totalDollsToBurn)
+        {
+            StartCoroutine(BurnDollCoroutine(doll));
+        }
+    }
+
+    private IEnumerator BurnDollCoroutine(GameObject doll)
+    {
+        isBurning = true;
+        fireParticles.Play();
+        audioSource.PlayOneShot(fireBurningSound, 0.8f);
+
+        yield return new WaitForSeconds(0.5f);
+        audioSource.PlayOneShot(dollScreamSound, 1f);
+
+        // Haaira reacts
+        haairaAI.OnDollBurned();
+
+        yield return new WaitForSeconds(burnDuration);
+
+        dollsBurned++;
+        fireParticles.Stop();
+        Destroy(doll);
+
+        // Check if transformation threshold reached
+        if (dollsBurned == 6)
+        {
+            haairaAI.Transform();
+        }
+
+        // Check if game won
+        if (dollsBurned >= totalDollsToBurn)
+        {
+            GameManager.instance.TriggerEndingSequence();
+        }
+
+        isBurning = false;
+    }
+
+    public bool CanBurnDoll()
+    {
+        return !isBurning && dollsBurned < totalDollsToBurn;
+    }
+}
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class GameManager : MonoBehaviour
+{
+    public static GameManager instance;
+
+    [SerializeField] private GameObject deathScreenPrefab;
+    [SerializeField] private float restartDelay = 2f;
+
+    private bool gameOver = false;
+    private bool gameWon = false;
+
+    private void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    private void Update()
+    {
+        if (gameOver && Input.anyKeyDown)
+        {
+            RestartGame();
+        }
+
+        if (gameWon && Input.anyKeyDown)
+        {
+            LoadMainMenu();
+        }
+    }
+
+    public void PlayerCaught()
+    {
+        if (gameOver) return;
+        
+        gameOver = true;
+        Time.timeScale = 0.5f; // Slow motion effect
+        
+        Instantiate(deathScreenPrefab);
+        
+        Invoke("RestartGame", restartDelay);
+    }
+
+    public void TriggerEndingSequence()
+    {
+        gameWon = true;
+        gameOver = true;
+        // Load ending scene or trigger ending cutscene
+        SceneManager.LoadScene("EndingSequence");
+    }
+
+    private void RestartGame()
+    {
+        Time.timeScale = 1f;
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+
+    private void LoadMainMenu()
+    {
+        Time.timeScale = 1f;
+        SceneManager.LoadScene("MainMenu");
+    }
+}
+using UnityEngine;
+
+public class AudioManager : MonoBehaviour
+{
+    [Header("Audio Sources")]
+    [SerializeField] private AudioSource ambientSource;
+    [SerializeField] private AudioSource tensionLayer1;
+    [SerializeField] private AudioSource tensionLayer2;
+    [SerializeField] private AudioSource tensionLayer3;
+
+    [Header("Ambient Clips")]
+    [SerializeField] private AudioClip windLoop;
+    [SerializeField] private AudioClip castleAmbience;
+
+    [Header("Tension Music")]
+    [SerializeField] private AudioClip[] tensionTracks;
+
+    [Header("Tension Control")]
+    [SerializeField] private float maxTension = 3f;
+
+    private float currentTension = 0f;
+    private BurnDollSystem burnDollSystem;
+
+    private void Start()
+    {
+        ambientSource.clip = windLoop;
+        ambientSource.loop = true;
+        ambientSource.Play();
+
+        burnDollSystem = GetComponent<BurnDollSystem>();
+    }
+
+    private void Update()
+    {
+        UpdateTension();
+    }
+
+    private void UpdateTension()
+    {
+        // Tension increases as dolls are burned
+        if (burnDollSystem != null)
+        {
+            float tensionValue = (float)burnDollSystem.DollsBurned / burnDollSystem.TotalDolls;
+            currentTension = Mathf.Lerp(currentTension, tensionValue * maxTension, Time.deltaTime * 0.5f);
+        }
+
+        // Control which tension layers are active
+        tensionLayer1.volume = Mathf.Clamp01(currentTension - 0f);
+        tensionLayer2.volume = Mathf.Clamp01(currentTension - 1f);
+        tensionLayer3.volume = Mathf.Clamp01(currentTension - 2f);
+    }
+
+    public void PlayAmbienceTransition()
+    {
+        ambientSource.clip = castleAmbience;
+        ambientSource.Play();
+    }
+}
+using UnityEngine;
+using System.Collections.Generic;
+
+public class EventsManager : MonoBehaviour
+{
+    [Header("Doll Spawning")]
+    [SerializeField] private GameObject dollPrefab;
+    [SerializeField] private Transform[] dollSpawnPoints;
+    [SerializeField] private int totalDolls = 7;
+
+    [Header("Paranormal Events")]
+    [SerializeField] private float paranormalEventChance = 0.3f;
+    [SerializeField] private float eventCheckInterval = 10f;
+    [SerializeField] private AudioClip[] paranormalSounds;
+
+    [Header("Random Events")]
+    [SerializeField] private Light[] castleLights;
+
+    private List<GameObject> spawnedDolls = new List<GameObject>();
+    private float eventTimer;
+    private AudioSource audioSource;
+
+    private void Start()
+    {
+        audioSource = GetComponent<AudioSource>();
+        SpawnDolls();
+        eventTimer = eventCheckInterval;
+    }
+
+    private void Update()
+    {
+        eventTimer -= Time.deltaTime;
+        if (eventTimer <= 0)
+        {
+            CheckForParanormalEvent();
+            eventTimer = eventCheckInterval;
+        }
+    }
+
+    private void SpawnDolls()
+    {
+        // Shuffle spawn points for randomization
+        List<Transform> shuffledPoints = new List<Transform>(dollSpawnPoints);
+        for (int i = 0; i < shuffledPoints.Count; i++)
+        {
+            Transform temp = shuffledPoints[i];
+            int randomIndex = Random.Range(i, shuffledPoints.Count);
+            shuffledPoints[i] = shuffledPoints[randomIndex];
+            shuffledPoints[randomIndex] = temp;
+        }
+
+        for (int i = 0; i < totalDolls && i < shuffledPoints.Count; i++)
+        {
+            GameObject doll = Instantiate(dollPrefab, shuffledPoints[i].position, Quaternion.identity);
+            spawnedDolls.Add(doll);
+        }
+    }
+
+    private void CheckForParanormalEvent()
+    {
+        if (Random.value < paranormalEventChance)
+        {
+            TriggerParanormalEvent();
+        }
+    }
+
+    private void TriggerParanormalEvent()
+    {
+        int eventType = Random.Range(0, 3);
+
+        switch (eventType)
+        {
+            case 0: // Lights flicker
+                StartCoroutine(FlickerLights());
+                break;
+            case 1: // Strange sound
+                audioSource.PlayOneShot(paranormalSounds[Random.Range(0, paranormalSounds.Length)], 0.6f);
+                break;
+            case 2: // Multiple effects
+                StartCoroutine(FlickerLights());
+                audioSource.PlayOneShot(paranormalSounds[Random.Range(0, paranormalSounds.Length)], 0.6f);
+                break;
+        }
+    }
+
+    private System.Collections.IEnumerator FlickerLights()
+    {
+        for (int i = 0; i < 5; i++)
+        {
+            foreach (Light light in castleLights)
+            {
+                light.enabled = !light.enabled;
+            }
+            yield return new WaitForSeconds(0.15f);
+        }
+
+        foreach (Light light in castleLights)
+        {
+            light.enabled = true;
+        }
+    }
+
+    public void RemoveDoll(GameObject doll)
+    {
+        spawnedDolls.Remove(doll);
+    }
+}
+using UnityEngine;
+using System.IO;
+
+[System.Serializable]
+public class GameSaveData
+{
+    public int dollsBurned;
+    public float playerHealth;
+    public Vector3 playerPosition;
+    public bool haairaTransformed;
+    public int endingVariation;
+}
+
+public class SaveManager : MonoBehaviour
+{
+    private string savePath;
+    private const string SAVE_FILE = "savegame.json";
+
+    private void Start()
+    {
+        savePath = Application.persistentDataPath + "/" + SAVE_FILE;
+    }
+
+    public void SaveGame(GameSaveData data)
+    {
+        string json = JsonUtility.ToJson(data, true);
+        File.WriteAllText(savePath, json);
+        Debug.Log("Game saved to: " + savePath);
+    }
+
+    public GameSaveData LoadGame()
+    {
+        if (File.Exists(savePath))
+        {
+            string json = File.ReadAllText(savePath);
+            GameSaveData data = JsonUtility.FromJson<GameSaveData>(json);
+            Debug.Log("Game loaded from: " + savePath);
+            return data;
+        }
+        else
+        {
+            Debug.Log("No save file found!");
+            return null;
+        }
+    }
+
+    public void DeleteSave()
+    {
+        if (File.Exists(savePath))
+        {
+            File.Delete(savePath);
+            Debug.Log("Save file deleted");
+        }
+    }
+}
+using UnityEngine;
+
+public class InteractionSystem : MonoBehaviour
+{
+    [SerializeField] private InteractionType interactionType;
+    [SerializeField] private GameObject interactableObject;
+    [SerializeField] private AudioClip interactionSound;
+    [SerializeField] private Canvas interactionPrompt;
+
+    private AudioSource audioSource;
+    private PlayerController playerController;
+
+    public enum InteractionType { ReadNote, CollectDoll, BurnDoll, OpenDoor }
+
+    private void Start()
+    {
+        audioSource = GetComponent<AudioSource>();
+        if (interactionPrompt) interactionPrompt.enabled = false;
+    }
+
+    private void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.E) && interactionPrompt.enabled)
+        {
+            PerformInteraction();
+        }
+    }
+
+    private void OnTriggerEnter(Collider collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            if (interactionPrompt) interactionPrompt.enabled = true;
+        }
+    }
+
+    private void OnTriggerExit(Collider collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            if (interactionPrompt) interactionPrompt.enabled = false;
+        }
+    }
+
+    public void PerformInteraction()
+    {
+        if (interactionSound)
+            audioSource.PlayOneShot(interactionSound);
+
+        switch (interactionType)
+        {
+            case InteractionType.ReadNote:
+                ReadNote();
+                break;
+            case InteractionType.CollectDoll:
+                CollectDoll();
+                break;
+            case InteractionType.BurnDoll:
+                BurnDoll();
+                break;
+            case InteractionType.OpenDoor:
+                OpenDoor();
+                break;
+        }
+    }
+
+    private void ReadNote()
+    {
+        Debug.Log("Reading note: " + interactableObject.name);
+        // Show UI with note content
+    }
+
+    private void CollectDoll()
+    {
+        Debug.Log("Doll collected!");
+        Destroy(interactableObject);
+    }
+
+    private void BurnDoll()
+    {
+        BurnDollSystem burnSystem = FindObjectOfType<BurnDollSystem>();
+        if (burnSystem && burnSystem.CanBurnDoll())
+        {
+            burnSystem.BurnDoll(interactableObject);
+        }
+    }
+
+    private void OpenDoor()
+    {
+        GetComponent<Animator>().SetBool("isOpen", true);
+    }
+}
+using UnityEngine;
+
+public class HaairaTransform : MonoBehaviour
+{
+    [Header("Transformation")]
+    [SerializeField] private GameObject normalForm;
+    [SerializeField] private GameObject monsterForm;
+    [SerializeField] private ParticleSystem transformationEffect;
+    [SerializeField] private AudioClip transformationSound;
+
+    [Header("Visual Changes")]
+    [SerializeField] private Light haairaLight;
+    [SerializeField] private Color normalLightColor = Color.white;
+    [SerializeField] private Color monsterLightColor = new Color(0, 0.5f, 1f); // Cyan
+
+    private AudioSource audioSource;
+    private bool isTransformed = false;
+
+    private void Start()
+    {
+        audioSource = GetComponent<AudioSource>();
+        normalForm.SetActive(true);
+        monsterForm.SetActive(false);
+    }
+
+    public void PerformTransformation()
+    {
+        if (isTransformed) return;
+
+        isTransformed = true;
+
+        // Play transformation animation
+        transformationEffect.Play();
+        audioSource.PlayOneShot(transformationSound, 1f);
+
+        // Switch models
+        normalForm.SetActive(false);
+        monsterForm.SetActive(true);
+
+        // Change lighting
+        haairaLight.color = monsterLightColor;
+        haairaLight.intensity *= 1.5f;
+
+        // Update animator on monster form
+        Animator monsterAnimator = monsterForm.GetComponent<Animator>();
+        if (monsterAnimator)
+        {
+            monsterAnimator.SetBool("isTransformed", true);
+        }
+    }
+
+    public bool IsTransformed => isTransformed;
+}
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+public class MenuManager : MonoBehaviour
+{
+    [SerializeField] private Button startButton;
+    [SerializeField] private Button settingsButton;
+    [SerializeField] private Button quitButton;
+    [SerializeField] private Canvas settingsPanel;
+
+    private void Start()
+    {
+        startButton.onClick.AddListener(StartGame);
+        settingsButton.onClick.AddListener(ShowSettings);
+        quitButton.onClick.AddListener(QuitGame);
+        if (settingsPanel) settingsPanel.enabled = false;
+    }
+
+    private void StartGame()
+    {
+        SceneManager.LoadScene("CinematicIntro");
+    }
+
+    private void ShowSettings()
+    {
+        if (settingsPanel)
+            settingsPanel.enabled = !settingsPanel.enabled;
+    }
+
+    private void QuitGame()
+    {
+        Application.Quit();
+    }
+}
+using UnityEngine;
+using UnityEngine.UI;
+
+public class HUDManager : MonoBehaviour
+{
+    [Header("UI Elements")]
+    [SerializeField] private Slider staminaBar;
+    [SerializeField] private Slider batteryBar;
+    [SerializeField] private Text dollsCollectedText;
+    [SerializeField] private Image lowBatteryWarning;
+
+    private PlayerController playerController;
+    private FlashlightSystem flashlightSystem;
+    private BurnDollSystem burnDollSystem;
+
+    private void Start()
+    {
+        playerController = FindObjectOfType<PlayerController>();
+        flashlightSystem = FindObjectOfType<FlashlightSystem>();
+        burnDollSystem = FindObjectOfType<BurnDollSystem>();
+    }
+
+    private void Update()
+    {
+        UpdateStaminaBar();
+        UpdateBatteryBar();
+        UpdateDollCounter();
+    }
+
+    private void UpdateStaminaBar()
+    {
+        if (playerController)
+        {
+            staminaBar.value = playerController.CurrentStamina / playerController.MaxStamina;
+        }
+    }
+
+    private void UpdateBatteryBar()
+    {
+        if (flashlightSystem)
+        {
+            batteryBar.value = flashlightSystem.CurrentBattery / flashlightSystem.MaxBattery;
+            lowBatteryWarning.enabled = flashlightSystem.IsBatteryLow;
+        }
+    }
+
+    private void UpdateDollCounter()
+    {
+        if (burnDollSystem)
+        {
+            dollsCollectedText.text = "Dolls: " + burnDollSystem.DollsBurned + "/" + burnDollSystem.TotalDolls;
+        }
+    }
+}
+using UnityEngine;
+using UnityEngine.UI;
+
+public class DeathScreen : MonoBehaviour
+{
+    [SerializeField] private Text deathMessage;
+    [SerializeField] private Image bloodEffect;
+
+    private void Start()
+    {
+        deathMessage.text = "Haaira caught you...\n\nPress any key to restart";
+        StartCoroutine(FadeInBlood());
+    }
+
+    private System.Collections.IEnumerator FadeInBlood()
+    {
+        Color color = bloodEffect.color;
+        for (float i = 0; i < 1f; i += Time.deltaTime)
+        {
+            color.a = i;
+            bloodEffect.color = color;
+            yield return null;
+        }
+    }
+}
+GAME FLOW SEQUENCE:
+
+1. MAIN MENU
+   - Press Start
+   - Settings available
+
+2. CINEMATIC INTRO
+   Duration: 1-2 minutes
+   - Camera shows dark forest at night
+   - Sound of motorcycle engine grows louder
+   - Fazk appears on motorcycle, headlight sweeping through trees
+   - Arrives at castle gates
+   - Gets off motorcycle (animation)
+   - Camera pans to show castle entrance
+   - Audio transitions to ambience
+   - Fade to gameplay
+
+3. CASTLE EXPLORATION
+   Duration: 2-5 minutes
+   - Player spawns outside castle main gate (locked)
+   - Must find side entrance or window
+   - Enter castle, triggered events:
+     * Distant laugh heard
+     * Lights flicker
+     * Subtle sounds of movement
+   - Tutorial UI explains controls (WASD, F for flashlight, E to interact, Ctrl to crouch)
+
+4. DOLL DISCOVERY
+   Duration: 1 minute
+   - Player explores castle rooms
+   - Finds first doll in a bedroom or hallway
+   - Note appears: "Encuéntranos" (Find Us)
+   - Collecting the note triggers:
+     * Dolls disappear (teleport away)
+     * Lights go out momentarily
+     * Haaira's laugh echoes
+
+5. COLLECTION PHASE
+   Duration: 15-20 minutes (main gameplay loop)
+   
+   FOR EACH DOLL (1-7):
+   
+   DOLL 1-3: Build Tension
+   - Haaira appears briefly, retreats
+   - Occasional distant laughs increase
+   - Paranormal events (lights flicker, sounds)
+   - Player hunted but can escape
+   
+   DOLL 4-5: Increased Danger
+   - Haaira more aggressive
+   - Chases player actively
+   - Narrow escapes
+   - Audio layer 2 triggers (tension music increases)
+   
+   DOLL 6: TRANSFORMATION TRIGGER
+   - Lighting changes to blue-tinted
+   - Haaira transforms into monstrous form
+   - Faster, more dangerous
+   - Audio layer 3 triggers (full tension)
+   
+   DOLL 7: Final Collection
+   - Most intense pursuit
+   - Player must navigate to basement
+   - Reach fireplace/burning area
+
+6. BURNING MECHANIC
+   - Player collects wood (scattered in basement)
+   - Approach fireplace with doll + wood
+   - Press E to initiate burning sequence
+   - Animation plays (3 second burn)
+   - Doll screams (audio cue)
+   - Haaira screams in pain (unique per doll)
+   - Progression counter updates
+   - Repeat for all 7 dolls
+
+7. ENDING SEQUENCE
+   Duration: 2-3 minutes
+   
+   BEFORE FINAL DOLL:
+   - Haaira weakened but still dangerous
+   - Castle becomes more unstable (sounds of collapse)
+   
+   AFTER 7TH DOLL:
+   - Haaira collapses, weakened
+   - Camera cinematic: Fazk approaches
+   - Cutscene: Fazk carries Haaira
+   - Movement to castle entrance
+   - Truck waiting outside (mysterious driver visible)
+   - Fazk loads Haaira into truck
+   - Screen fades to black
+   
+   ENDING VARIATIONS:
+   - Fade to black with engine sound
+   - Ambiguous final frame
+   - Truck drives away (camera pulls back)
+   - Silent credits
+   - Message appears: "What was Fazk's true purpose?"
+
+8. GAME OVER / RESTART
+   - If caught: Death screen appears
+   - Blood effect fades in
+   - Message: "Haaira caught you... Press any key to restart"
+   - Restart from beginning with randomized doll locations
+
+TOTAL PLAYTIME: 30-60 minutes (first run)
+AUDIO DESIGN - Indie Horror Game
+
+SOUNDSCAPE LAYERS:
+
+1. AMBIENT LAYER (Base)
+   - Wind (continuous, volume: 0.3)
+   - Castle ambience (creaks, distant settling sounds)
+   - Very subtle hum (suggests otherworldly presence)
+   
+2. INTERACTION LAYER
+   - Footsteps (context-sensitive: wood, stone, carpet)
+   - Door creaks
+   - Object pickups (subtle, non-intrusive)
+   - Note page turns
+
+3. CHARACTER AUDIO LAYER
+   - Haaira's recurring laugh (iconic, unsettling)
+   - Haaira's whispered words (indistinct)
+   - Breathing (increases during pursuits)
+   - Pain screams (escalate with each doll burned)
+
+4. TENSION LAYER (Music)
+   - Layer 1: Subtle string drone (0-2 dolls)
+   - Layer 2: Additional low brass (2-5 dolls)
+   - Layer 3: Percussion elements (5+ dolls)
+   - All layers fade in gradually (no sudden transitions)
+
+5. PARANORMAL LAYER (Random Events)
+   - Whispers (unintelligible words)
+   - Poltergeist effects (object movements)
+   - Electronic distortion (optional, rare)
+   - Reverse vocals (unsettling, context: transformation)
+
+6. ENVIRONMENTAL REACTIONS
+   - When Haaira hunts: louder ambient, heartbeat suggestion
+   - When in basement: resonant echo, fire sounds
+   - When near end: distorted audio, reality-bending effects
+
+TENSION CURVE:
+
+Time (min) | Tension | Audio State
+0-5        | Low     | Ambient only
+5-10       | Low->Med| Occasional whispers
+10-20      | Med     | Layer 1 + distant laughs
+20-30      | Med->High| Layer 2 + heartbeat
+30-45      | High    | Layer 3 + constant threats
+45-55      | Very High| Distorted, chaotic
+55-60      | Peak    | Finale music, all layers
+
+KEY AUDIO EVENTS:
+
+1. GAME START
+   - Fade in: wind + distant motorcycle
+   - Transition to castle ambience
+
+2. FIRST DOLL DISCOVERY
+   - Sudden silence (all ambience stops)
+   - Dolls whisper "Encuéntranos"
+   - Laugh echoes
+   - Lights flicker (SFX: electrical hum)
+
+3. DOLL COLLECTION
+   - Pick sound effect (metallic ding, soft)
+   - Soft notification beep (non-diegetic)
+   - Haaira's laugh triggers if too close
+
+4. HAAIRA APPEARANCES
+   - Whisper/sigh sound
+   - Footsteps (heavy, deliberate)
+   - Breathing (close to camera/player)
+
+5. DOLL BURNING
+   - Fire ignition (whoosh, crackle)
+   - Fire loop plays (duration: doll burn time)
+   - Doll screams (high-pitched, disturbing)
+   - Haaira's pain scream (context-appropriate, louder each time)
+
+6. HAAIRA TRANSFORMATION (After 6th doll)
+   - Distortion effect (digital/analog breakdown)
+   - Monster growl/screech
+   - Audio pitch shift (reality warping)
+   - All ambient sounds become warped
+
+7. ENDING SEQUENCE
+   - Music swells
+   - Wind rises
+   - Truck engine rumble
+   - Silence (before final black screen)
+
+AUDIO MIXING GUIDELINES:
+
+- Player breathing: subtle, can increase during chases
+- Haaira laugh: 0.4 volume (ambient perception)
+- Whispers: intelligible ONLY on repeat listens
+- Music: never overpowers survival sounds
+- Silence: used strategically (jump scares use sudden sound, not silence)
+- Spatial audio: crucial - use pan/3D positioning for scares
+
+IMPLEMENTATION NOTES:
+
+- Use reverb heavily in castle (large room simulation)
+- Compress dialogue/screams to cut through mix
+- Layer ambient sounds (3-5 separate elements per "ambient")
+- Stagger paranormal sounds to prevent pattern recognition
+- Use binaural audio for directional threats
+OPTIMIZATION STRATEGIES:
+
+RENDERING:
+□ Use LOD (Level of Detail) for distant castle geometry
+□ Implement frustum culling for camera view
+□ Bake lighting where possible (static light areas)
+□ Use low-poly models (target: 50K-100K tris for main level)
+□ Compress textures (RGB565 for diffuse, etc.)
+□ Use pooling for particle effects
+□ Limit active lights (max 8-10 realtime lights)
+
+AUDIO:
+□ Compress audio to OGG format (40-60% size reduction)
+□ Use audio streaming for long ambience loops
+□ Limit simultaneous audio sources (max 16-20)
+□ Dynamically lower audio quality in intense scenes
+
+PERFORMANCE:
+□ Target 60 FPS on mid-range hardware
+□ Use async scene loading for transitions
+□ Implement object pooling (dolls, UI, particles)
+□ Reduce draw calls (batch static geometry)
+□ Cap physics updates (FixedTimestep)
+
+MEMORY:
+□ Target <1GB RAM usage
+□ Stream large scenes
+□ Clear unused assets between scenes
+□ Use object pooling for frequent spawns
+
+TESTING:
+□ Profile on target hardware (low-end PC, console if applicable)
+□ Monitor CPU/GPU usage
+□ Check memory leaks
+□ Test on various systems
+
+QUICK WINS:
+1. Disable shadows on non-critical objects
+2. Use simpler shaders on distant objects
+3. Implement draw distance culling
+4. Reduce particle count per system
+5. Compress all textures
+UNITY SCENE SETUP INSTRUCTIONS:
+
+SCENE 1: MainMenu.unity
+- Canvas with buttons (Start, Settings, Quit)
+- Background image (castle concept art, dark)
+- Audio source (ambient music loop)
+- MenuManager script attached to Canvas
+
+SCENE 2: CinematicIntro.unity
+- Motorcycle model (animated)
+- Forest environment (static)
+- Castle background (distant)
+- Camera path (cinematic railcam)
+- Audio: motorcycle engine, wind, ambience
+- Duration: 60-90 seconds
+- Auto-transitions to CastleMain
+
+SCENE 3: CastleMain.unity (Main Gameplay)
+HIERARCHY SETUP:
+
+/World
+  /Castle
+    /MainHall
+    /Corridors
+    /Bedrooms
+    /Kitchen
+    /Study
+    /Basement
+  /Exterior
+    /Forest
+    /Gates
+
+/Characters
+  /Fazk (Player)
+    - Capsule (physics body)
+    - Camera (first-person)
+    - AudioListener
+    - PlayerController script
+    - FlashlightSystem script
+      - Light (flashlight)
+  /Haaira
+    - Model
+    - NavMeshAgent
+    - Animator
+    - HaairaAI script
+    - HaairaTransform script
+    - AudioSource
+
+/Environment
+  /Dolls
+    - (7x Doll prefabs, scattered)
+  /InteractiveObjects
+    - /Notes
+    - /Wood
+    - /Fireplace
+      - BurnDollSystem script
+      - ParticleSystem (fire)
+      - Light (fire glow)
+  /Lighting
+    - DirectionalLight (moon/exterior)
+    - PointLights (torch sconces, dim)
+
+/Managers
+  - GameManager
+  - AudioManager
+  - EventsManager
+  - SaveManager
+
+/UI
+  - HUD Canvas
+    - StaminaBar
+    - BatteryBar
+    - DollCounter
+    - InteractionPrompts
+  - DeathScreen (inactive by default)
+
+SCENE 4: BasementLevel.unity (Alternative area)
+- Fireplace location
+- Wood storage
+- Burning mechanic area
+- More oppressive atmosphere
+
+SCENE 5: EndingSequence.unity
+- Outdoor scene (castle entrance)
+- Truck model
+- Final cutscene camera
+- Music swell
+- Fade to black
+
+PREFAB SETUP:
+
+Doll.prefab
+- Mesh (doll model)
+- Collider (trigger)
+- InteractionSystem component
+  - Type: CollectDoll
+- Note child object (if reading note opens doll dialogue)
+
+Haaira.prefab
+- Model (rigged, animated)
+- NavMeshAgent
+- HaairaAI
+- HaairaTransform
+- AudioSource x3 (laugh, scream, growl)
+
+Fireplace.prefab
+- Mesh (fireplace)
+- ParticleSystem
+- Light
+- BurnDollSystem
+- AudioSource
+
+Note.prefab
+- Text mesh or billboard
+- InteractionSystem (ReadNote)
+- Collider (trigger)
+
+SETUP CHECKLIST:
+
+□ Player tagged "Player"
+□ Enemy tagged "Enemy"
+□ NavMesh baked on level
+□ All colliders set up (walls, floor, obstacles)
+□ Lights configured for atmosphere
+□ Audio sources assigned and tested
+□ UI anchored properly for different resolutions
+□ Camera FOV set to 65-75 degrees
+□ Physics gravity set to -9.81 Y
+GAME DESIGN DOCUMENT - INDIE HORROR GAME
+
+TITLE: Haaira's Castle
+
+GENRE: First-Person Psychological Horror / Survival
+
+TARGET AUDIENCE: Adults 16+
+
+CORE CONCEPT:
+Explore an abandoned castle, collect cursed dolls, and escape from a supernatural threat.
+
+GAMEPLAY PILLARS:
+1. Exploration - Navigate complex castle environment
+2. Resource Management - Limited stamina and battery
+3. Evasion - Avoid/outsmart pursuing enemy
+4. Progression - Burning dolls increases tension
+5. Atmosphere - Immersive sound design and lighting
+
+PLAYER MOTIVATIONS:
+- Curiosity (what is the castle? why the dolls?)
+- Survival instinct (escape Haaira)
+- Story completion (what happens in the ending?)
+
+TARGET PLAYTIME: 30-60 minutes (first run)
+
+CORE MECHANICS:
+1. Movement (Walk, Sprint with stamina, Crouch)
+2. Flashlight (Limited battery, directional light)
+3. Interaction (Collect items, read notes, burn dolls)
+4. Pursuit (Avoid enemy, hide/escape)
+
+PROGRESSION:
+Phase 1 (0-20 min): Building tension, doll collection
+Phase 2 (20-45 min): Escalating danger, enemy transformation
+Phase 3 (45-60 min): Climax, final escape sequence
+
+DIFFICULTY SCALING:
+- Fixed difficulty (no settings to avoid frustration balancing)
+- Haaira becomes faster after 6 dolls burned
+- More frequent appearances as story progresses
+- Limited resources create tension
+
+ACCESSIBILITY:
+- Subtitles for all dialogue/audio cues
+- Adjustable flashlight brightness
+- Color-blind friendly UI
+- Option to reduce motion effects (screen shake)
+
+SUCCESS CONDITIONS:
+- Burn all 7 dolls
+- Escape castle with Haaira
+
+FAILURE CONDITIONS:
+- Caught by Haaira
+- Out of battery with no escape route
+- Stuck in unintended geometry (rare, level design prevents)
+
+STORY THEMES:
+- Isolation and vulnerability
+- The unknown (ambiguous ending)
+- Psychological horror (tension over gore)
+- Redemption or damnation (open interpretation)
+
+EMOTIONAL JOURNEY:
+Start: Fear, curiosity
+Middle: Dread, urgency
+End: Relief, confusion, existential uncertainty
+
+TARGET PLATFORMS:
+- PC (Windows, Linux)
+- Consoles (optional: Switch, PS5, Xbox)
+RECOMMENDED UNITY PROJECT SETTINGS:
+
+QUALITY SETTINGS:
+- Target FPS: 60
+- V-Sync: Enabled
+- Anti-aliasing: FXAA (fast)
+- Shadows: Medium quality, 2-3 lights
+- Texture quality: High
+- Master volume: 1.0
+
+PHYSICS SETTINGS:
+- Gravity: (0, -9.81, 0)
+- Default material: Friction 0.4, Bounce 0.0
+- Fixed Timestep: 0.02 (50 updates/sec)
+- Max Physics Timesteps: 4
+
+AUDIO SETTINGS:
+- Doppler level: 1.0
+- Default speaker mode: Stereo
+- Max audio sources: 32
+- Preload audio data: Enabled
+
+RENDERING SETTINGS:
+- Render pipeline: Built-in (3D)
+- HDR: Disabled (performance)
+- MSAA: 2x or 4x
+- Lightmap settings:
+  * Size: 1024
+  * Quality: High
+  * Compression: High
+  * Indirect resolution: 2
+
+INPUT SETTINGS:
+- Add axes for flashlight (F), interaction (E)
+- WASD for movement
+- Shift for sprint
+- Ctrl for crouch
+
+PLAYER PREFERENCES:
+- Store volume levels
+- Store control bindings
+- Store graphics preferences
+- Store brightness setting
+
+TIME SCALE:
+- Normal gameplay: 1.0
+- Death slow-motion: 0.5 (briefly)
+- Pause menu: 0.0
